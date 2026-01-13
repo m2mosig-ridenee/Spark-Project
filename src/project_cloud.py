@@ -22,6 +22,10 @@ sc = spark.sparkContext
 GCS_MODE = os.environ.get("GCS_MODE", "local").lower()
 BUCKET = os.environ.get("BUCKET_NAME", "").strip()
 
+print("DEBUG GCS_MODE =", GCS_MODE)
+print("DEBUG BUCKET   =", BUCKET)
+print("DEBUG PATH_TASK_EVENTS =", PATH_TASK_EVENTS)
+
 if GCS_MODE in ("bucket_sample",) and not BUCKET:
     raise ValueError("BUCKET_NAME must be set when GCS_MODE=bucket_sample")
 
