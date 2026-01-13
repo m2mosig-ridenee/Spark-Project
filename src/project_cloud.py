@@ -10,6 +10,7 @@ import pandas as pd
 import seaborn as sns
 from scipy.stats import pearsonr
 import os
+import subprocess
 
 spark = SparkSession.builder.getOrCreate()
 sc = spark.sparkContext
@@ -19,7 +20,7 @@ sc = spark.sparkContext
 #   - "bucket_sample"-> reads gs://<BUCKET>/data/... (your copied parts 60–64)
 #   - "public_full"  -> reads gs://clusterdata-2011-2/.../part-*.csv.gz (whole dataset)
 GCS_MODE = os.environ.get("GCS_MODE", "local").lower()
-BUCKET = os.environ.get("uga-spark-lab-212121", "").strip()
+BUCKET = os.environ.get("BUCKET_NAME", "").strip()
 
 if GCS_MODE in ("bucket_sample",) and not BUCKET:
     raise ValueError("BUCKET_NAME must be set when GCS_MODE=bucket_sample")
@@ -45,6 +46,31 @@ else:
     PATH_TASK_EVENTS    = "../spark-data/task_events/*.csv.gz"
     PATH_TASK_USAGE     = "../spark-data/task_usage/*.csv.gz"
 
+
+def upload_to_gcs(local_path: str, bucket: str, gcs_folder: str = "figures"):
+    """
+    Upload a local file to gs://<bucket>/<gcs_folder>/ using gsutil.
+    Works on Dataproc because gsutil is available and the VM SA has access.
+    """
+    if not bucket:
+        print("[WARN] BUCKET_NAME not set -> skipping upload for", local_path)
+        return
+    gcs_path = f"gs://{bucket}/{gcs_folder}/"
+    cmd = f"gsutil -m cp {local_path} {gcs_path}"
+    print("Uploading:", cmd)
+    subprocess.run(["bash", "-lc", cmd], check=False)
+
+def savefig_and_upload(filename: str, bucket: str = None, dpi: int = 200):
+    """
+    Save current matplotlib figure to filename and upload to GCS.
+    """
+    bucket = bucket or BUCKET
+    plt.tight_layout()
+    plt.savefig(filename, dpi=dpi, bbox_inches="tight")
+    plt.close()
+    print("Saved figure:", filename)
+    upload_to_gcs(filename, bucket=bucket, gcs_folder="figures")
+
 # ----------------------------
 # Parsing utilities
 # ----------------------------
@@ -60,24 +86,6 @@ def to_float(x):
 # ---
 # ## Question 8 — *Are the tasks that request the more resources the one that consume the more resources?*
 # 
-# Information about the request of the resources can be found in *task_events*, while the real consumption of the resources is recorded in *task_usage*. <br>
-# The first analysis is based on the comparison of requested and used **RAM**: <br>
-# - From *task_events* are extracted the task IDs (job_id, task_idx) and the corresponding requested RAM, but removing duplicates (in case multiple events are recorded per task).
-# - From *task_usage* are extracted the task IDs and, to simplify, the mean of the recorded usages of RAM.
-# 
-# To answer this question, there are two indicators:
-# - a visualisation using a **heatmap**, by categorising the values into 5 bins based on the quantiles (in order to have useful quantities for each bin)
-# - a **correlation** indicator that is more exact based on the raw values (real values before binning)
-# 
-# As it is shown by both approaches, the tasks requiring the most resources aquire the most resourses. That is explained by the heatmap colors concentrated in the diagonal and the correlation value being strong.<br>
-# 
-# The same analysis can be done for the other resources such as CPU and disk usage.
-# 
-# 
-# 
-# 
-
-# In[40]:
 
 
 # Loading the dataset
@@ -102,8 +110,6 @@ print(f"Total of CPU_values_events_table : {CPU_values_events_table.count()}")
 print(f"Min of CPU_values_events_table : {CPU_values_events_table.min()}")
 print(f"Max of CPU_values_events_table : {CPU_values_events_table.max()}")
 
-
-# In[41]:
 
 
 task_events_reqRAM = (          # comes from task_events and concentrates on reqRAM
@@ -221,11 +227,13 @@ ax.set_title(
 ax.set_xticklabels(req_labels, rotation=45, ha='right')
 ax.set_yticklabels(used_labels, rotation=0)
 
-out = "heatmap.png"
-plt.tight_layout()
-plt.savefig(out, dpi=200, bbox_inches="tight")
-plt.close()
-print("Saved figure:", out)
+# out = "heatmap.png"
+# plt.tight_layout()
+# plt.savefig(out, dpi=200, bbox_inches="tight")
+# plt.close()
+# print("Saved figure:", out)
+savefig_and_upload("heatmap.png", dpi=200)
+
 
 
 ######################################################
@@ -259,26 +267,7 @@ else:
     print("WEAK correlation")
 
 
-# The average locality ratio is 0.994, which is very close to 1. This indicates that, for most jobs, the number of machines used is almost equal to the number of tasks. In other words, tasks belonging to the same job are generally scheduled on different machines, and task co-location is rare.
-# 
-# This observation shows that the scheduler favors a distributed execution strategy, prioritizing parallelism and load balancing over strict task locality. By spreading tasks across many machines, the cluster can maximize throughput and reduce job execution time, especially for jobs with a large number of independent tasks.
-# 
-# However, this strategy also has drawbacks. Distributing tasks across multiple machines reduces data locality and may increase network communication and synchronization overhead. Despite these costs, the observed behavior is consistent with the design of large-scale cloud infrastructures, where resource utilization and fairness across users are more critical than keeping tasks from the same job on a single machine.
-# 
-# In general, tasks from the same job do not run on the same machine. The observed scheduling strategy prioritizes throughput and fairness over locality, which is consistent with the design of large-scale cloud infrastructures.
-
-# ---
-
 # ## Q9 : Correlation between CPU peaks and task evictions
-# 
-# **Method / definitions.**
-# - Define machine-window key: `(machine_id, window_start)` where `window_start` is the task_usage start time.
-# - Compute:
-#   - `cpu_sum(machine, window)`: sum of CPU usage across tasks on that machine during the window.
-#   - `evict_count(machine, window)`: number of eviction events mapped into the same 5-min bucket.
-# - Define **peak windows** as top 5% windows by `cpu_sum` (95th percentile threshold).
-# - Compare eviction activity in peak vs non-peak windows and compute Pearson correlation between `cpu_sum` and `evict_count`.
-
 
 EVICT = 2
 WINDOW_US = 5 * 60 * 1_000_000  # 5 minutes in microseconds
@@ -463,28 +452,11 @@ plt.xlabel("CPU usage decile (0=low, 9=high)")
 plt.ylabel("Avg evictions per window")
 plt.title("Q9: Evictions vs CPU usage level (deciles)")
 
-out = "q9_evictions_vs_cpu_deciles.png"
-plt.tight_layout()
-plt.savefig(out, dpi=200, bbox_inches="tight")
-plt.close()
-print("Saved figure:", out)
+# out = "q9_evictions_vs_cpu_deciles.png"
+# plt.tight_layout()
+# plt.savefig(out, dpi=200, bbox_inches="tight")
+# plt.close()
+# print("Saved figure:", out)
+savefig_and_upload("q9_evictions_vs_cpu_deciles.png", dpi=200)
 
 
-# **Results (subset).**
-# - Usage windows: **2,099,250**
-# - Windows with ≥1 eviction: **26,312**
-# - Joined windows: **2,101,869**
-# - CPU 95th percentile threshold: `cpu_sum ≈ 0.4095`
-# 
-# Peak vs non-peak:
-# - Peak windows: **103,781**
-# - Non-peak windows: **1,998,088**
-# - `P(eviction>0 | peak)` = **0.02255** (2.255%)
-# - `P(eviction>0 | non-peak)` = **0.011997** (1.200%)
-# - Avg evictions/window: peak **0.03642**, non-peak **0.01957**
-# - Pearson correlation: **r = 0.0556**
-# 
-# **Interpretation.**
-# - Evictions are about **~1.9× more likely** during peak CPU windows than during non-peak windows.
-# - The Pearson correlation is small but positive, meaning CPU load alone is not a strong linear predictor.
-# - Overall, results suggest that resource pressure increases eviction probability, but evictions also depend on other factors (priority, scheduling class, memory pressure, policies).
