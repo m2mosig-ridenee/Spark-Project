@@ -19,12 +19,12 @@ sc = spark.sparkContext
 #   - "local"        -> reads ../spark-data/...
 #   - "bucket_sample"-> reads gs://<BUCKET>/data/... (your copied parts 60–64)
 #   - "public_full"  -> reads gs://clusterdata-2011-2/.../part-*.csv.gz (whole dataset)
-GCS_MODE = os.environ.get("GCS_MODE", "local").lower()
-BUCKET = os.environ.get("BUCKET_NAME", "").strip()
+# GCS_MODE = os.environ.get("GCS_MODE", "local").lower()
+# BUCKET = os.environ.get("BUCKET_NAME", "").strip()
 
-print("DEBUG GCS_MODE =", GCS_MODE)
-print("DEBUG BUCKET   =", BUCKET)
-print("DEBUG PATH_TASK_EVENTS =", PATH_TASK_EVENTS)
+GCS_MODE = "bucket_sample"
+BUCKET = "uga-spark-lab-212121"
+
 
 if GCS_MODE in ("bucket_sample",) and not BUCKET:
     raise ValueError("BUCKET_NAME must be set when GCS_MODE=bucket_sample")
